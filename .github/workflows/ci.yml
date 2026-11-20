@@ -28,6 +28,8 @@ jobs:
         working-directory: frontend
       - run: npm run typecheck
         working-directory: frontend
+      - run: npm run test
+        working-directory: frontend
       - run: npm run build
         working-directory: frontend
   compose:
@@ -43,6 +45,9 @@ jobs:
       - run: docker compose build
       - run: docker compose up -d --wait --wait-timeout 150
       - run: curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 1 http://127.0.0.1:8080/api/v1/health
+      - name: Verify production HTML entrypoint
+        run: |
+          curl --fail --silent --show-error http://127.0.0.1:8080/ | grep -q 'id="root"'
       - name: Verify SQLite persistence after backend restart
         run: |
           docker compose exec -T backend python -c "from app.db import SessionLocal; from app.models import Setting; db=SessionLocal(); db.merge(Setting(key='ci_persistence_marker',value='retained')); db.commit(); db.close()"
