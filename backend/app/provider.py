@@ -1,6 +1,7 @@
 """AKShare interface wrapper. Market data are external and may fail or revise."""
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from math import isfinite
 import re
 
@@ -52,13 +53,21 @@ class AKShareProvider:
             if not all(isfinite(x) for x in (o,h,l,c,v)) or min(o,h,l,c)<=0 or v<0 or h < max(o,c,l) or l>min(o,c,h):
                 raise DataError(f"Invalid ETF OHLCV {day}")
             if amount is not None and (not isfinite(amount) or amount<0):raise DataError("Invalid turnover")
-            if start<=day<=end:result[day.isoformat()]=DailyBar(day.isoformat(),o,h,l,c,v,amount)
+            if start<=day<=end:
+                item=DailyBar(day.isoformat(),o,h,l,c,v,amount)
+                previous=result.get(item.date)
+                if previous is not None and previous!=item:
+                    raise DataError("Conflicting OHLCV rows for "+item.date)
+                result[item.date]=item
         if not result:raise DataError("No bars in requested date range")
         return [result[k] for k in sorted(result)]
 
     def get_latest_available_date(self, symbol: str):
-        # No separate query: caller determines latest valid date from returned daily bars.
-        return None
+        # The latest *available* bar is not necessarily the latest *confirmed* close.
+        end=datetime.now(ZoneInfo("Asia/Shanghai")).date()
+        start=end-timedelta(days=40)
+        bars=self.get_daily_bars(symbol,start,end,"RAW")
+        return date.fromisoformat(bars[-1].date)
 
     def get_trading_calendar(self):
         # Never assume unavailable calendar provides a reliable confirmed status.

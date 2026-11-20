@@ -20,3 +20,17 @@ def test_invalid_ohlc(monkeypatch):
     data=pd.DataFrame([{"日期":"2026-11-19","开盘":1.0,"最高":.8,"最低":.9,"收盘":1.1,"成交量":1100}])
     monkeypatch.setitem(sys.modules,"akshare",SimpleNamespace(fund_etf_hist_em=lambda **kw:data))
     with pytest.raises(DataError):AKShareProvider().get_daily_bars("510300",date(2026,11,1),date(2026,11,20))
+
+def test_duplicate_conflict_is_not_silently_overwritten(monkeypatch):
+    import sys,pandas as pd
+    row={"日期":"2026-11-19","开盘":1.0,"最高":1.2,"最低":0.9,"收盘":1.1,"成交量":1100}
+    changed=dict(row,收盘=1.09)
+    monkeypatch.setitem(sys.modules,"akshare",SimpleNamespace(fund_etf_hist_em=lambda **kw:pd.DataFrame([row,changed])))
+    with pytest.raises(DataError,match="Conflicting OHLCV"):
+        AKShareProvider().get_daily_bars("510300",date(2026,11,1),date(2026,11,20))
+
+def test_identical_duplicate_allowed(monkeypatch):
+    import sys,pandas as pd
+    row={"日期":"2026-11-19","开盘":1.0,"最高":1.2,"最低":0.9,"收盘":1.1,"成交量":1100}
+    monkeypatch.setitem(sys.modules,"akshare",SimpleNamespace(fund_etf_hist_em=lambda **kw:pd.DataFrame([row,row])))
+    assert len(AKShareProvider().get_daily_bars("510300",date(2026,11,1),date(2026,11,20)))==1
