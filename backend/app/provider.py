@@ -72,8 +72,13 @@ class AKShareProvider:
     def get_trading_calendar(self):
         # Never assume unavailable calendar provides a reliable confirmed status.
         import akshare as ak
-        df=ak.tool_trade_date_hist_sina()
-        if df is None or "trade_date" not in df.columns:raise DataError("Calendar unavailable")
+        # AKShare 1.20.45 renamed tool_trade_date_hist_sina.
+        fn=getattr(ak,"calendar_trade_date_hist_sina",None)
+        if fn is None:fn=getattr(ak,"tool_trade_date_hist_sina",None)
+        if fn is None:raise DataError("Trading calendar API not available in installed AKShare")
+        df=fn()
+        if df is None or df.empty or "trade_date" not in df.columns:
+            raise DataError("Calendar unavailable or schema changed")
         return [str(d)[:10] for d in df["trade_date"]]
 
     def health_check(self):

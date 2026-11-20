@@ -21,6 +21,13 @@ def worker(task, queue):
             value = {"matches": len(records), "matched_510300": any(x["symbol"] == "510300" for x in records)}
             if not value["matched_510300"]:
                 raise RuntimeError("Search did not return requested ETF")
+        elif task == "spot_sina":
+            import akshare
+            df=akshare.fund_etf_category_sina(symbol="ETF基金")
+            if df is None or df.empty or not {"代码","名称"}.issubset(df.columns):
+                raise RuntimeError("Sina ETF list returned empty or unexpected schema")
+            examples=[str(x) for x in df["代码"].head(3)]
+            value={"rows":len(df),"code_examples":examples,"has_510300":any("510300" in str(x) for x in df["代码"])}
         elif task == "calendar":
             dates = provider.get_trading_calendar()
             value = {"dates": len(dates), "recent_date": dates[-1] if dates else None}
@@ -55,7 +62,7 @@ def main():
         version = getattr(akshare, "__version__", "unknown")
     except Exception as exc:
         version = f"unavailable: {type(exc).__name__}"
-    findings = {task: probe(task) for task in ("history_sh","history_sz","spot_search","calendar")}
+    findings = {task: probe(task) for task in ("history_sh","history_sz","spot_search","spot_sina","calendar")}
     report = {
         "probed_at_utc": datetime.now(timezone.utc).isoformat(),
         "akshare_version": version,

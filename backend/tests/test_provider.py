@@ -34,3 +34,9 @@ def test_identical_duplicate_allowed(monkeypatch):
     row={"日期":"2026-11-19","开盘":1.0,"最高":1.2,"最低":0.9,"收盘":1.1,"成交量":1100}
     monkeypatch.setitem(sys.modules,"akshare",SimpleNamespace(fund_etf_hist_em=lambda **kw:pd.DataFrame([row,row])))
     assert len(AKShareProvider().get_daily_bars("510300",date(2026,11,1),date(2026,11,20)))==1
+
+def test_new_calendar_method(monkeypatch):
+    import sys,pandas as pd
+    monkeypatch.setitem(sys.modules,"akshare",SimpleNamespace(
+        calendar_trade_date_hist_sina=lambda:pd.DataFrame({"trade_date":["2026-11-19","2026-11-20"]})))
+    assert AKShareProvider().get_trading_calendar()==["2026-11-19","2026-11-20"]

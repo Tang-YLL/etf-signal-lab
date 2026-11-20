@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - '.github/workflows/market-source-probe.yml'
+      - 'scripts/probe_market_data.py'
 jobs:
   verify:
     runs-on: ubuntu-latest
