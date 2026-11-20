@@ -14,7 +14,7 @@ from . import models
 from .config import COOKIE_HTTPS, session_secret
 from .security import init_admin, verify_password, encode_password, ensure_login
 from .strategies import STRATEGIES, Strategy
-from .service import schedule_refresh, recalculate, rule_for, eligible_day
+from .service import schedule_refresh, recalculate, rule_for, eligible_day, recover_abandoned_runs
 from .provider import AKShareProvider, exchange
 
 @asynccontextmanager
@@ -27,6 +27,7 @@ async def lifespan(app):
             if not db.get(models.StrategyTemplate, category):
                 db.add(models.StrategyTemplate(category=category, version=1, params_json=json.dumps(asdict(rule))))
         db.commit()
+        recover_abandoned_runs(db)
         schedule_refresh(db)
     yield
 
@@ -97,31 +98,56 @@ def instrument_or_404(db,symbol):
     if not inst:raise HTTPException(404,"ETF not in catalogue")
     return inst
 
-def latest_bar(db,symbol):
-    return db.scalar(select(models.Bar).where(models.Bar.symbol==symbol).order_by(desc(models.Bar.date)).limit(1))
+def latest_bar(db,symbol,confirmed=False):
+    query=select(models.Bar).where(models.Bar.symbol==symbol,models.Bar.source=="akshare_em",models.Bar.adjustment=="RAW")
+    if confirmed:
+        query=query.where(models.Bar.data_status=="CONFIRMED")
+    return db.scalar(query.order_by(desc(models.Bar.date)).limit(1))
 
-def latest_indicator(db,symbol):
+def latest_indicator(db,symbol,date=None):
     inst=db.get(models.Instrument,symbol)
     if not inst:return None
-    return db.scalar(select(models.IndicatorSnapshot).where(models.IndicatorSnapshot.symbol==symbol,models.IndicatorSnapshot.rule_version==inst.rule_version).order_by(desc(models.IndicatorSnapshot.date),desc(models.IndicatorSnapshot.id)))
+    query=select(models.IndicatorSnapshot).where(models.IndicatorSnapshot.symbol==symbol,models.IndicatorSnapshot.rule_version==inst.rule_version)
+    if date is not None:query=query.where(models.IndicatorSnapshot.date==date)
+    return db.scalar(query.order_by(desc(models.IndicatorSnapshot.date),desc(models.IndicatorSnapshot.id)).limit(1))
 
-def latest_threshold(db,symbol):
+def latest_threshold(db,symbol,date=None):
     inst=db.get(models.Instrument,symbol)
     if not inst:return None
-    return db.scalar(select(models.ThresholdSnapshot).where(models.ThresholdSnapshot.symbol==symbol,models.ThresholdSnapshot.rule_version==inst.rule_version).order_by(desc(models.ThresholdSnapshot.date),desc(models.ThresholdSnapshot.id)))
+    query=select(models.ThresholdSnapshot).where(models.ThresholdSnapshot.symbol==symbol,models.ThresholdSnapshot.rule_version==inst.rule_version)
+    if date is not None:query=query.where(models.ThresholdSnapshot.date==date)
+    return db.scalar(query.order_by(desc(models.ThresholdSnapshot.date),desc(models.ThresholdSnapshot.id)).limit(1))
 
 def etf_summary(db,inst):
-    bar=latest_bar(db,inst.symbol)
-    indicator=latest_indicator(db,inst.symbol)
-    threshold=latest_threshold(db,inst.symbol)
-    status="UNAVAILABLE" if not bar else bar.data_status
-    if bar and bar.date < eligible_day().isoformat() and status!="CONFIRMED":status="STALE"
-    return {"symbol":inst.symbol,"name":inst.name,"exchange":inst.exchange,"category":inst.category,
+    # Historical/pending bars remain visible, but B/S signals must reference a
+    # confirmed close. If a newer bar is pending, retain the preceding snapshot.
+    newest=latest_bar(db,inst.symbol)
+    confirmed=latest_bar(db,inst.symbol,confirmed=True)
+    reference=confirmed or newest
+    if not newest:
+        status="UNAVAILABLE"
+    elif confirmed and newest.date>confirmed.date:
+        status="PENDING"
+    elif confirmed and newest.date==confirmed.date:
+        status="CONFIRMED"
+    else:
+        status=newest.data_status
+    if confirmed and status=="CONFIRMED" and confirmed.date<eligible_day().isoformat():
+        status="STALE"
+    indicator=latest_indicator(db,inst.symbol,confirmed.date) if confirmed else None
+    threshold=latest_threshold(db,inst.symbol,confirmed.date) if confirmed else None
+    return {
+        "symbol":inst.symbol,"name":inst.name,"exchange":inst.exchange,"category":inst.category,
         "signals_enabled":inst.signals_enabled,"rule_version":inst.rule_version,
-        "close":bar.close if bar else None,"date":bar.date if bar else None,"data_status":status,
-        "indicators":({"rsi14":indicator.rsi14,"ma20":indicator.ma20,"boll_upper":indicator.boll_upper,"boll_lower":indicator.boll_lower} if indicator and indicator.date==bar.date else None) if bar else None,
-        "signal":indicator.signal if indicator and bar and indicator.date==bar.date else "UNAVAILABLE",
-        "thresholds":json.loads(threshold.result_json) if threshold and bar and threshold.date==bar.date else None}
+        "close":reference.close if reference else None,"date":reference.date if reference else None,
+        "pending_date":newest.date if newest and newest.data_status!="CONFIRMED" else None,
+        "data_status":status,
+        "indicators":({"rsi14":indicator.rsi14,"ma20":indicator.ma20,
+                       "boll_upper":indicator.boll_upper,"boll_lower":indicator.boll_lower}
+                      if indicator else None),
+        "signal":indicator.signal if indicator else "UNAVAILABLE",
+        "thresholds":json.loads(threshold.result_json) if threshold else None
+    }
 
 @app.get("/api/v1/system/status")
 def status(db:DB,authenticated:Auth):
@@ -198,6 +224,15 @@ def indicators(symbol:str,db:DB,authenticated:Auth,limit:int=Query(300,ge=20,le=
     by_date={}
     for r in rows:
         if r.date not in by_date:by_date[r.date]={"date":r.date,"rsi14":r.rsi14,"ma20":r.ma20,"boll_upper":r.boll_upper,"boll_lower":r.boll_lower,"signal":r.signal,"rule_version":r.rule_version}
+    confirmed_dates=set(db.scalars(select(models.Bar.date).where(
+        models.Bar.symbol==symbol,models.Bar.source=="akshare_em",
+        models.Bar.adjustment=="RAW",models.Bar.data_status=="CONFIRMED")).all())
+    for day,value in by_date.items():
+        if day not in confirmed_dates:
+            value["signal"]="PENDING"
+            value["data_status"]="PENDING"
+        else:
+            value["data_status"]="CONFIRMED"
     return list(reversed(list(by_date.values())[:limit]))
 
 @app.get("/api/v1/etfs/{symbol}/signals")
@@ -207,8 +242,9 @@ def signals(symbol:str,db:DB,authenticated:Auth):
 @app.get("/api/v1/etfs/{symbol}/next-day-thresholds")
 def thresholds(symbol:str,db:DB,authenticated:Auth):
     inst=instrument_or_404(db,symbol)
-    row=latest_threshold(db,symbol)
-    return json.loads(row.result_json) if row else {"status":"UNAVAILABLE","intervals":{}}
+    confirmed=latest_bar(db,symbol,confirmed=True)
+    row=latest_threshold(db,symbol,confirmed.date) if confirmed else None
+    return json.loads(row.result_json) if row else {"status":"UNAVAILABLE","reason":"No confirmed close with a calculated threshold","intervals":{}}
 
 @app.get("/api/v1/strategy/templates")
 def strategies(db:DB,authenticated:Auth):

@@ -37,5 +37,32 @@ def test_ingest_revision_and_recalculation(logged_client):
         assert ingest(db,"510300",revised)==1
         assert len(db.query(Revision).all())==1
         recalculate(db,"510300")
-    assert logged_client.get("/api/v1/etfs/510300").json()["close"]>1.0
-    assert logged_client.get("/api/v1/etfs/510300/next-day-thresholds").json()["status"] in ("BOUNDED_EXHAUSTIVE","RANGE_TOO_LARGE")
+    summary=logged_client.get("/api/v1/etfs/510300").json()
+    assert summary["close"]>1.0
+    assert summary["data_status"]=="PENDING"
+    assert summary["signal"]=="UNAVAILABLE"
+    assert summary["thresholds"] is None
+    assert logged_client.get("/api/v1/etfs/510300/next-day-thresholds").json()["status"]=="UNAVAILABLE"
+    with SessionLocal() as db:
+        bars=db.query(Bar).all()
+        for bar in bars:bar.data_status="CONFIRMED"
+        db.commit()
+        recalculate(db,"510300")
+    confirmed=logged_client.get("/api/v1/etfs/510300").json()
+    assert confirmed["data_status"] in ("CONFIRMED","STALE")
+    assert confirmed["indicators"] is not None
+    assert confirmed["thresholds"]["status"] in ("BOUNDED_EXHAUSTIVE","RANGE_TOO_LARGE")
+    with SessionLocal() as db:
+        latest=db.query(Bar).order_by(Bar.date.desc()).first()
+        newest_date=latest.date
+        latest.data_status="PENDING"
+        db.commit()
+        recalculate(db,"510300")
+    pending=logged_client.get("/api/v1/etfs/510300").json()
+    assert pending["data_status"]=="PENDING"
+    assert pending["pending_date"]==newest_date
+    assert pending["date"]!=newest_date
+    assert pending["indicators"] is not None
+    assert pending["thresholds"] is not None
+    confirmed_signals=logged_client.get("/api/v1/etfs/510300/signals").json()
+    assert all(item["date"]!=newest_date for item in confirmed_signals)

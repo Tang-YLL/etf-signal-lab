@@ -73,13 +73,22 @@ def recalculate(db:Session, symbol: str):
             db.add(models.IndicatorSnapshot(symbol=symbol,date=row.date,rule_version=inst.rule_version,data_hash=version_hash,
                 rsi14=ind["rsi14"],ma20=ind["ma20"],boll_lower=ind["boll_lower"],boll_upper=ind["boll_upper"],
                 signal=current_signal,rule_json=json.dumps(asdict(rule)) if rule else "{}"))
-    if rule:
-        latest=rows[-1]
-        final_hash=digest([(r.date,r.checksum) for r in rows])
-        existing=db.scalar(select(models.ThresholdSnapshot).where(models.ThresholdSnapshot.symbol==symbol,models.ThresholdSnapshot.date==latest.date,models.ThresholdSnapshot.rule_version==inst.rule_version,models.ThresholdSnapshot.data_hash==final_hash))
-        if not existing:
-            output=solve(closes,rule,tick="0.001")
-            db.add(models.ThresholdSnapshot(symbol=symbol,date=latest.date,rule_version=inst.rule_version,data_hash=final_hash,result_json=json.dumps(output)))
+    # Compute the actionable reference only for the latest confirmed close.
+    # A pending session must never displace the preceding confirmed scenario.
+    confirmed_indices=[i for i,row in enumerate(rows) if row.data_status=="CONFIRMED"]
+    if rule and confirmed_indices:
+        index=confirmed_indices[-1]
+        if index>=19:
+            latest=rows[index]
+            final_hash=digest([(r.date,r.checksum) for r in rows[:index+1]])
+            existing=db.scalar(select(models.ThresholdSnapshot).where(
+                models.ThresholdSnapshot.symbol==symbol,models.ThresholdSnapshot.date==latest.date,
+                models.ThresholdSnapshot.rule_version==inst.rule_version,
+                models.ThresholdSnapshot.data_hash==final_hash))
+            if not existing:
+                output=solve(closes[:index+1],rule,tick="0.001")
+                db.add(models.ThresholdSnapshot(symbol=symbol,date=latest.date,rule_version=inst.rule_version,
+                    data_hash=final_hash,result_json=json.dumps(output)))
     db.commit()
 
 def ingest(db:Session, symbol: str, fetched: list):
@@ -154,6 +163,17 @@ def perform_refresh(run_id: int):
         except Exception:log.exception("Cannot persist refresh error")
     finally:
         with _gate:_pending=False
+
+def recover_abandoned_runs(db:Session) -> int:
+    """Runs interrupted by process/container termination cannot resume a thread."""
+    unfinished=db.scalars(select(models.RefreshRun).where(
+        models.RefreshRun.status.in_(("QUEUED","RUNNING")))).all()
+    for run in unfinished:
+        run.status="INTERRUPTED"
+        run.finished_at=datetime.now(timezone.utc)
+        run.message="Backend restarted before this update completed; retrying watchlist on startup"
+    if unfinished:db.commit()
+    return len(unfinished)
 
 def schedule_refresh(db:Session, symbols: list[str] | None=None, force=False) -> int | None:
     global _pending, _last_check
