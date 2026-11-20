@@ -203,8 +203,11 @@ def detail(symbol:str,db:DB,authenticated:Auth):return etf_summary(db,instrument
 @app.patch("/api/v1/etfs/{symbol}")
 def edit_etf(symbol:str,body:EditETF,db:DB,authenticated:Auth):
     inst=instrument_or_404(db,symbol)
-    if body.category is not None and body.category not in STRATEGIES:raise HTTPException(422,"Unknown category")
-    if body.category is not None:inst.category=body.category
+    # Distinguish an omitted category from explicit null (clear classification).
+    if "category" in body.model_fields_set:
+        if body.category is not None and body.category not in STRATEGIES:
+            raise HTTPException(422,"Unknown category")
+        inst.category=body.category
     if body.signals_enabled is not None:inst.signals_enabled=body.signals_enabled
     inst.rule_version+=1
     db.commit()

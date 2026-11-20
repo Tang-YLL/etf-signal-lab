@@ -16,6 +16,9 @@ def test_api_basic(logged_client,monkeypatch):
     assert response.status_code==201, response.text
     assert logged_client.get("/api/v1/etfs").json()[0]["symbol"]=="510300"
     assert logged_client.patch("/api/v1/etfs/510300",json={"category":"gold"},headers={"X-Requested-With":"ETFSignalLab"}).status_code==200
+    clear=logged_client.patch("/api/v1/etfs/510300",json={"category":None},headers={"X-Requested-With":"ETFSignalLab"})
+    assert clear.status_code==200
+    assert clear.json()["category"] is None
     assert logged_client.delete("/api/v1/watchlist/510300",headers={"X-Requested-With":"ETFSignalLab"}).status_code==200
     assert logged_client.get("/api/v1/etfs").json()==[]
 

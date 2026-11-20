@@ -16,7 +16,7 @@ export const api={
   search:(q:string)=>request<{symbol:string;name:string;category:string|null;source:string}[]>('/etfs/search?q='+encodeURIComponent(q)),
   add:(symbol:string,name:string,category:string|null)=>request<ETF>('/watchlist',{method:'POST',body:JSON.stringify({symbol,name,category})}),
   remove:(symbol:string)=>request('/watchlist/'+symbol,{method:'DELETE'}),
-  update:(symbol:string,patch:{category?:string;signals_enabled?:boolean})=>request<ETF>('/etfs/'+symbol,{method:'PATCH',body:JSON.stringify(patch)}),
+  update:(symbol:string,patch:{category?:string|null;signals_enabled?:boolean})=>request<ETF>('/etfs/'+symbol,{method:'PATCH',body:JSON.stringify(patch)}),
   bars:(symbol:string)=>request<Bar[]>('/etfs/'+symbol+'/daily-bars'),
   indicators:(symbol:string)=>request<HistoryIndicator[]>('/etfs/'+symbol+'/indicators'),
   templates:()=>request<Template[]>('/strategy/templates'),
