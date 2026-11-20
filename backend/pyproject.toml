@@ -2,8 +2,13 @@
 name = "etf-signal-lab"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1"]
+dependencies = [
+  "fastapi>=0.115,<1", "uvicorn>=0.30,<1", "sqlalchemy>=2.0,<3",
+  "alembic>=1.13,<2", "pydantic>=2.0,<3", "pandas>=2.2,<4",
+  "numpy>=1.26,<3", "akshare>=1.16", "itsdangerous>=2.2,<3"
+]
 [project.optional-dependencies]
 test = ["pytest>=8,<10", "httpx>=0.27,<1"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
+testpaths = ["tests"]
