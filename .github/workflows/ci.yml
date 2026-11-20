@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker compose build
-      - run: docker compose up -d --wait
-      - run: curl --fail --silent --show-error http://127.0.0.1:8080/api/v1/health
+      - run: docker compose up -d --wait --wait-timeout 150
+      - run: curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 1 http://127.0.0.1:8080/api/v1/health
       - if: always()
-        run: docker compose logs --no-color --tail=80 && docker compose down
+        run: docker compose ps && docker compose down

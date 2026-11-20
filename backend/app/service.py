@@ -119,7 +119,9 @@ def ingest(db:Session, symbol: str, fetched: list):
             # Vendor does not publish a final flag. Repeat agreement 10+ min later is a heuristic.
             if observed.replace(tzinfo=None)-existing.last_seen.replace(tzinfo=None)>=timedelta(minutes=10):
                 existing.stable_observations+=1
-                if existing.stable_observations>=2 and day<shanghai_now().date():
+                if existing.stable_observations>=2 and day<=eligible_day():
+                    # Same-day close is eligible after the 18:00 cutoff too.
+                    # Repeat-sampling is only a heuristic, not vendor finality.
                     existing.data_status="CONFIRMED"
             existing.last_seen=observed
     db.commit()
