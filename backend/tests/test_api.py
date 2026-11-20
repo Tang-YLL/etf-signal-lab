@@ -44,6 +44,8 @@ def test_ingest_revision_and_recalculation(logged_client):
     assert summary["close"]>1.0
     assert summary["data_status"]=="PENDING"
     assert summary["signal"]=="UNAVAILABLE"
+    assert summary["indicators"] is not None
+    assert summary["indicator_status"]=="PENDING"
     assert summary["thresholds"] is None
     assert logged_client.get("/api/v1/etfs/510300/next-day-thresholds").json()["status"]=="UNAVAILABLE"
     with SessionLocal() as db:

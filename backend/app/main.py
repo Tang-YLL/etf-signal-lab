@@ -134,7 +134,9 @@ def etf_summary(db,inst):
         status=newest.data_status
     if confirmed and status=="CONFIRMED" and confirmed.date<eligible_day().isoformat():
         status="STALE"
-    indicator=latest_indicator(db,inst.symbol,confirmed.date) if confirmed else None
+    # Numeric indicators can be shown provisionally on the first fetch.
+    # Directional signals and next-day threshold snapshots remain confirmed-only.
+    indicator=latest_indicator(db,inst.symbol,reference.date) if reference else None
     threshold=latest_threshold(db,inst.symbol,confirmed.date) if confirmed else None
     return {
         "symbol":inst.symbol,"name":inst.name,"exchange":inst.exchange,"category":inst.category,
@@ -145,8 +147,9 @@ def etf_summary(db,inst):
         "indicators":({"rsi14":indicator.rsi14,"ma20":indicator.ma20,
                        "boll_upper":indicator.boll_upper,"boll_lower":indicator.boll_lower}
                       if indicator else None),
-        "signal":indicator.signal if indicator else "UNAVAILABLE",
-        "thresholds":json.loads(threshold.result_json) if threshold else None
+        "indicator_status":"CONFIRMED" if confirmed and indicator else ("PENDING" if indicator else "UNAVAILABLE"),
+        "signal":indicator.signal if confirmed and indicator else "UNAVAILABLE",
+        "thresholds":json.loads(threshold.result_json) if confirmed and threshold else None
     }
 
 @app.get("/api/v1/system/status")
