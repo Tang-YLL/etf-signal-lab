@@ -34,3 +34,32 @@ def test_solver_matches_direct_indicators():
         s=evaluate(price,calculate([*p,price],rule.boll_k),rule)
         if s.startswith(("B","S")):
             assert any(float(r["from"])<=price<=float(r["to"]) for r in result["intervals"][s])
+
+def test_bounded_solver_matches_direct_six_conditions_on_random_histories():
+    # Independent oracle: recompute all indicators for every hypothetical tick.
+    # Unlike evaluate(), this checks weaker levels even when a stronger level overlaps.
+    from random import Random
+    for seed in range(16):
+        rng=Random(seed)
+        prices=[1.0]
+        for _ in range(39):
+            prices.append(max(.2,prices[-1]+rng.uniform(-.025,.025)))
+        rule=STRATEGIES[["broad","dividend_low_vol","sector","cross_border","gold"][seed%5]]
+        result=solve(prices,rule,"0.600","1.400","0.005")
+        assert result["status"]=="BOUNDED_EXHAUSTIVE"
+        for tick in range(120,281):
+            p=tick*.005
+            i=calculate([*prices,p],rule.boll_k)
+            r,ma,lower,upper=(i["rsi14"],i["ma20"],i["boll_lower"],i["boll_upper"])
+            expected={
+                "B1":r<=rule.buy_rsi[0] and p<=ma,
+                "B2":r<=rule.buy_rsi[1] and p<=lower,
+                "B3":r<=rule.buy_rsi[2] and lower>0 and p<lower*(1-rule.extreme_deviation),
+                "S1":r>=rule.sell_rsi[0] and p>=ma,
+                "S2":r>=rule.sell_rsi[1] and p>=upper,
+                "S3":r>=rule.sell_rsi[2] and p>upper*(1+rule.extreme_deviation)
+            }
+            for level,should_match in expected.items():
+                actual=any(float(segment["from"])-1e-12<=p<=float(segment["to"])+1e-12
+                           for segment in result["intervals"][level])
+                assert actual==should_match,(seed,p,level,actual,should_match)
