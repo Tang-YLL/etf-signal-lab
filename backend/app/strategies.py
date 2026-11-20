@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+"""Six candidate rules. No historical performance claims."""
+from dataclasses import dataclass, asdict
 
 @dataclass(frozen=True)
 class Strategy:
@@ -22,13 +23,16 @@ def evaluate(price: float, indicators: dict | None, strategy: Strategy):
     if not strategy.enabled: return "WATCH"
     r, m = indicators["rsi14"], indicators["ma20"]
     l, u = indicators["boll_lower"], indicators["boll_upper"]
-    buys = [r <= strategy.buy_rsi[0] and price <= m,
+    buys = (r <= strategy.buy_rsi[0] and price <= m,
             r <= strategy.buy_rsi[1] and price <= l,
-            r <= strategy.buy_rsi[2] and l > 0 and price < l * (1 - strategy.extreme_deviation)]
-    sells = [r >= strategy.sell_rsi[0] and price >= m,
+            r <= strategy.buy_rsi[2] and l > 0 and price < l * (1 - strategy.extreme_deviation))
+    sells = (r >= strategy.sell_rsi[0] and price >= m,
              r >= strategy.sell_rsi[1] and price >= u,
-             r >= strategy.sell_rsi[2] and price > u * (1 + strategy.extreme_deviation)]
+             r >= strategy.sell_rsi[2] and price > u * (1 + strategy.extreme_deviation))
     if any(buys) and any(sells): return "CONFLICT"
     if any(buys): return "B" + str(max(i + 1 for i, v in enumerate(buys) if v))
     if any(sells): return "S" + str(max(i + 1 for i, v in enumerate(sells) if v))
     return "WATCH"
+
+def strategy_dict(strategy: Strategy):
+    return asdict(strategy)
