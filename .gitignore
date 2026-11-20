@@ -3,8 +3,13 @@
 !.env.example
 __pycache__/
 .pytest_cache/
+*.pyc
+.venv/
 node_modules/
 dist/
+coverage/
+*.db
+*.db-*
+.session-secret
 data/*
 !data/.gitkeep
-*.db
