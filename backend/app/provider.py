@@ -67,7 +67,7 @@ class AKShareProvider:
         seen=set()
         for _,row in df.iterrows():
             raw=str(row["代码"]).strip()
-            match=re.fullmatch(r"(?:(sh|sz))?(\\d{6})",raw,flags=re.IGNORECASE)
+            match=re.fullmatch(r"(?:(sh|sz))?(\d{6})",raw,flags=re.IGNORECASE)
             if not match:
                 continue
             market,code=match.groups()
