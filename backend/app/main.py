@@ -237,7 +237,7 @@ def indicators(symbol:str,db:DB,authenticated:Auth,limit:int=Query(300,ge=20,le=
 
 @app.get("/api/v1/etfs/{symbol}/signals")
 def signals(symbol:str,db:DB,authenticated:Auth):
-    return [r for r in indicators(symbol,db,authenticated) if r["signal"] not in ("WATCH","UNAVAILABLE")]
+    return [r for r in indicators(symbol,db,authenticated,limit=300) if r["signal"] not in ("WATCH","UNAVAILABLE","PENDING")]
 
 @app.get("/api/v1/etfs/{symbol}/next-day-thresholds")
 def thresholds(symbol:str,db:DB,authenticated:Auth):
