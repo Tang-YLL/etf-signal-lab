@@ -2,14 +2,29 @@ services:
   backend:
     build: ./backend
     restart: unless-stopped
-    expose:
-      - "8000"
+    init: true
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - DATA_DIR=/app/data
+      - DATABASE_URL=sqlite:////app/data/etf.db
+      - MARKET_DATA_PROVIDER=${MARKET_DATA_PROVIDER:-akshare}
+      - MARKET_CHECK_COOLDOWN_SECONDS=${MARKET_CHECK_COOLDOWN_SECONDS:-600}
+      - MARKET_REQUEST_TIMEOUT_SECONDS=${MARKET_REQUEST_TIMEOUT_SECONDS:-15}
+      - COOKIE_HTTPS=${COOKIE_HTTPS:-false}
+    volumes:
+      - etf_data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health',timeout=5)"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
   web:
-    image: nginx:1.27-alpine
+    build: ./frontend
     restart: unless-stopped
     ports:
-      - "${WEB_PORT:-8080}:80"
-    volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - "${WEB_PORT:-8080}:8080"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+volumes:
+  etf_data:
