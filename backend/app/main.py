@@ -173,7 +173,7 @@ def search_etfs(db:DB,authenticated:Auth,q:str=Query(min_length=1,max_length=60)
     try:
         online=AKShareProvider().get_instruments(q)
         seen={r["symbol"] for r in results}
-        results += [{**x,"category":None,"source":"AKSHARE"} for x in online if x["symbol"] not in seen]
+        results += [{**x,"category":None} for x in online if x["symbol"] not in seen]
     except Exception:
         pass
     return results[:80]

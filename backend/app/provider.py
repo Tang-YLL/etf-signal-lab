@@ -4,6 +4,8 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from math import isfinite
 import re
+import threading
+import time
 
 @dataclass(frozen=True)
 class DailyBar:
@@ -20,19 +22,70 @@ class DataError(RuntimeError):
 
 class AKShareProvider:
     name = "akshare_em"
+    # Class-wide cache limits network calls from multiple browser tabs.
+    _catalogue_lock = threading.Lock()
+    _catalogue_cache = None
+    _catalogue_expires = 0.0
+    _em_retry_after = 0.0
+
     def get_instruments(self, text: str = ""):
         import akshare as ak
-        df = ak.fund_etf_spot_em()
-        if df is None or df.empty: raise DataError("Spot catalogue unavailable")
-        if not {"代码", "名称"}.issubset(df.columns): raise DataError("Catalogue schema changed")
-        result=[]
+        cls = type(self)
+        with cls._catalogue_lock:
+            now = time.monotonic()
+            if cls._catalogue_cache is not None and now < cls._catalogue_expires:
+                entries = cls._catalogue_cache
+            else:
+                entries = None
+                if now >= cls._em_retry_after:
+                    try:
+                        entries = self._parse_catalogue(ak.fund_etf_spot_em(), "AKSHARE_EM")
+                    except Exception:
+                        # Eastmoney may return HTTP 502 or temporary rate limits.
+                        # Avoid repeatedly hitting a failing upstream endpoint.
+                        cls._em_retry_after = now + 1800
+                if entries is None:
+                    try:
+                        entries = self._parse_catalogue(ak.fund_etf_category_sina(symbol="ETF基金"), "AKSHARE_SINA")
+                    except Exception as exc:
+                        if cls._catalogue_cache is not None:
+                            entries = [{**r, "source": "STALE_CATALOGUE"} for r in cls._catalogue_cache]
+                        else:
+                            raise DataError("Both ETF catalogue sources unavailable: " + type(exc).__name__) from exc
+                cls._catalogue_cache = entries
+                cls._catalogue_expires = now + (1800 if entries else 300)
+        keyword=text.lower().strip()
+        return [r for r in entries if keyword in r["symbol"] or keyword in r["name"].lower()][:80]
+
+    @staticmethod
+    def _parse_catalogue(df, source: str):
+        if df is None or df.empty:
+            raise DataError("Empty ETF catalogue")
+        if not {"代码", "名称"}.issubset(df.columns):
+            raise DataError("ETF catalogue schema changed")
+        entries=[]
+        seen=set()
         for _,row in df.iterrows():
-            symbol=str(row["代码"]).zfill(6)
-            name=str(row["名称"])
-            if re.fullmatch(r"\d{6}",symbol) and (text in symbol or text.lower() in name.lower()):
-                result.append({"symbol":symbol,"name":name,"exchange":exchange(symbol)})
-                if len(result)>=80:break
-        return result
+            raw=str(row["代码"]).strip()
+            match=re.fullmatch(r"(?:(sh|sz))?(\\d{6})",raw,flags=re.IGNORECASE)
+            if not match:
+                continue
+            market,code=match.groups()
+            if code in seen:
+                continue
+            name=str(row["名称"]).strip()
+            if not name or name.lower() in ("nan","none"):
+                continue
+            seen.add(code)
+            entries.append({
+                "symbol": code,
+                "name": name,
+                "exchange": market.upper() if market else exchange(code),
+                "source": source
+            })
+        if not entries:
+            raise DataError("Catalogue contains no valid ETF symbols")
+        return entries
 
     def get_daily_bars(self, symbol: str, start: date, end: date, adjustment: str = "RAW"):
         if adjustment!="RAW": raise DataError("Only RAW is validated for this version")

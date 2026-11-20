@@ -11,3 +11,10 @@ The project does **not** bypass bot checks, rate limits or access controls. The 
 The backend market refresh continues to keep prior SQLite data if a request fails, displays a failure reason and does not upgrade a new sample to CONFIRMED until a second identical sample at least 10 minutes later after the 18:00 trading-day cutoff. This is a heuristic stability test, not exchange or vendor finality.
 
 The quoted ETF examples are verification identifiers, not trading recommendations.
+
+## Verified network probe snapshots (2026-11-20)
+
+- [First run](https://github.com/Tang-YLL/etf-signal-lab/actions/runs/44729556425) — AKShare 1.20.65; RAW history for 510300 and 159915 succeeded (31 daily rows each); Eastmoney ETF catalogue returned HTTP 502; old calendar name was removed.
+- [Second run](https://github.com/Tang-YLL/etf-signal-lab/actions/runs/44730040112) — Eastmoney daily history returned Push2RateLimitError for both samples, Eastmoney catalogue still HTTP 502. Sina ETF catalogue succeeded (927 rows including 510300) and renamed Sina calendar succeeded (8,797 dates).
+- Provider search now **prefers Eastmoney catalogue, fails over to the verified Sina list** and caches it in-memory to reduce repeated requests. After Eastmoney errors, it waits at least 30 minutes before another Eastmoney catalogue attempt. When both fail, existing cache is marked STALE_CATALOGUE.
+- These are environment and moment-specific outcomes, **not** a claim of permanent reliability. The Sina catalogue may omit newly issued funds; manually entered ETF identities still require verification.
