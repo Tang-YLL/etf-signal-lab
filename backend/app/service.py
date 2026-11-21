@@ -10,7 +10,7 @@ from sqlalchemy import select, desc
 from sqlalchemy.orm import Session
 from . import models
 from .db import SessionLocal
-from .provider import AKShareProvider, DataError
+from .provider import DataError, build_provider, configured_provider_name
 from .indicators import calculate
 from .strategies import STRATEGIES, Strategy, evaluate
 from .solvers import solve
@@ -21,7 +21,7 @@ TZ=ZoneInfo("Asia/Shanghai")
 _gate=threading.Lock()
 _pending=False
 _last_check: datetime | None=None
-_provider_factory=AKShareProvider
+_provider_factory=build_provider
 
 def set_provider_factory(factory):
     global _provider_factory
@@ -55,10 +55,20 @@ def rule_for(db:Session, inst: models.Instrument) -> Strategy | None:
     params["enabled"]=bool(params["enabled"] and inst.signals_enabled)
     return Strategy(**params)
 
-def recalculate(db:Session, symbol: str):
+def active_source(db: Session, symbol: str) -> str | None:
+    """Return the source most recently observed for a symbol."""
+    row = db.scalar(select(models.Bar).where(
+        models.Bar.symbol == symbol,
+        models.Bar.adjustment == "RAW",
+    ).order_by(desc(models.Bar.last_seen), desc(models.Bar.date), desc(models.Bar.id)).limit(1))
+    return row.source if row else None
+
+
+def recalculate(db:Session, symbol: str, source: str | None = None):
     inst=db.get(models.Instrument,symbol)
     if inst is None: return
-    rows=db.scalars(select(models.Bar).where(models.Bar.symbol==symbol,models.Bar.adjustment=="RAW",models.Bar.source=="akshare_em").order_by(models.Bar.date)).all()
+    source = source or active_source(db, symbol) or "akshare_em"
+    rows=db.scalars(select(models.Bar).where(models.Bar.symbol==symbol,models.Bar.adjustment=="RAW",models.Bar.source==source).order_by(models.Bar.date)).all()
     if not rows:return
     closes=[]
     rule=rule_for(db,inst)
@@ -91,7 +101,7 @@ def recalculate(db:Session, symbol: str):
                     data_hash=final_hash,result_json=json.dumps(output)))
     db.commit()
 
-def ingest(db:Session, symbol: str, fetched: list):
+def ingest(db:Session, symbol: str, fetched: list, source: str = "akshare_em", adjustment: str = "RAW"):
     """Upsert with revisions and conservative two-sample confirmation."""
     updates=0
     observed=datetime.now(timezone.utc)
@@ -101,9 +111,14 @@ def ingest(db:Session, symbol: str, fetched: list):
         day=date.fromisoformat(value["date"])
         if day>allowed:continue
         checksum=digest(value)
-        existing=db.scalar(select(models.Bar).where(models.Bar.symbol==symbol,models.Bar.date==raw.date,models.Bar.source=="akshare_em",models.Bar.adjustment=="RAW"))
+        existing=db.scalar(select(models.Bar).where(
+            models.Bar.symbol==symbol,
+            models.Bar.date==raw.date,
+            models.Bar.source==source,
+            models.Bar.adjustment==adjustment,
+        ))
         if existing is None:
-            db.add(models.Bar(symbol=symbol,source="akshare_em",adjustment="RAW",checksum=checksum,**value))
+            db.add(models.Bar(symbol=symbol,source=source,adjustment=adjustment,checksum=checksum,**value))
             updates+=1
         elif existing.checksum!=checksum:
             old={k:getattr(existing,k) for k in ("open","high","low","close","volume","amount")}
@@ -140,11 +155,16 @@ def perform_refresh(run_id: int):
             changed=0
             for symbol in symbols:
                 try:
-                    latest=db.scalar(select(models.Bar).where(models.Bar.symbol==symbol).order_by(desc(models.Bar.date)))
+                    source_hint=active_source(db, symbol)
+                    latest_query=select(models.Bar).where(models.Bar.symbol==symbol)
+                    if source_hint:
+                        latest_query=latest_query.where(models.Bar.source==source_hint,models.Bar.adjustment=="RAW")
+                    latest=db.scalar(latest_query.order_by(desc(models.Bar.date)).limit(1))
                     start=date.fromisoformat(latest.date)-timedelta(days=45) if latest else eligible_day()-timedelta(days=730)
                     rows=provider.get_daily_bars(symbol,start,shanghai_now().date(),"RAW")
-                    changed+=ingest(db,symbol,rows)
-                    recalculate(db,symbol)
+                    source=getattr(provider,"last_source",getattr(provider,"name","akshare_em"))
+                    changed+=ingest(db,symbol,rows,source=source)
+                    recalculate(db,symbol,source=source)
                 except Exception as exc:
                     log.warning("Failed refreshing ETF %s: %s",symbol,type(exc).__name__)
                     failures.append(f"{symbol}: {type(exc).__name__}: {str(exc)[:180]}")
@@ -188,7 +208,7 @@ def schedule_refresh(db:Session, symbols: list[str] | None=None, force=False) ->
         _pending=True
         _last_check=now
     try:
-        run=models.RefreshRun(status="QUEUED",source="akshare_em",symbols_json=json.dumps(sorted(set(symbols))))
+        run=models.RefreshRun(status="QUEUED",source=configured_provider_name(),symbols_json=json.dumps(sorted(set(symbols))))
         db.add(run)
         db.commit()
         db.refresh(run)

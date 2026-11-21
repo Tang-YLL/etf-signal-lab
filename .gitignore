@@ -13,3 +13,8 @@ coverage/
 .session-secret
 data/*
 !data/.gitkeep
+frontend/playwright-report/
+frontend/test-results/
+frontend/.e2e-data/
+*.tsbuildinfo
+*.egg-info/

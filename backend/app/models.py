@@ -10,6 +10,8 @@ class Instrument(Base):
     __tablename__ = "etf_instruments"
     symbol: Mapped[str] = mapped_column(String(6), primary_key=True)
     name: Mapped[str] = mapped_column(String(120))
+    full_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    market_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     exchange: Mapped[str] = mapped_column(String(2))
     category: Mapped[str | None] = mapped_column(String(40), nullable=True)
     rule_version: Mapped[int] = mapped_column(Integer, default=1)
